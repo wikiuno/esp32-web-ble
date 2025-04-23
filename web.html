@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 Web控制</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <h1>ESP32电机控制</h1>
+    <button id="connectButton">连接到ESP32</button>
+    <div id="controls">
+        <button id="forward">前进</button>
+        <button id="left">左转</button>
+        <button id="stop">停止</button>
+        <button id="right">右转</button>
+        <button id="backward">后退</button>
+    </div>
+    <label for="speedInput">速度:</label>
+    <input type="range" id="speedInput" min="0" max="100" value="100">
+    <label id="speedValue">100</label>
+    <button id="setSpeed">设置速度</button>
+    <div id="status">
+        <p>状态: <span id="currentState">未连接</span></p>
+        <p>速度: <span id="currentSpeed">0</span></p>
+        <p>最后命令: <span id="lastCommand">无</span></p>
+        <p>最后读取时间: <span id="lastReadingTime">0</span></p>
+    </div>
+
+    <script>
+        let characteristicRX;
+        let characteristicTX;
+        let currentState = "未连接";
+        let currentSpeed = 0;
+        let lastCommand = "无";
+        let lastReadingTime = 0;
+
+        function updateSpeedDisplay() {
+            document.getElementById('speedValue').textContent = document.getElementById('speedInput').value;
+        }
+
+        function connectDevice() {
+            return navigator.bluetooth.requestDevice({ filters: [{ services: [0x6E400001] }] })
+                .then(device => {
+                    console.log('设备名: ' + device.name);
+                    currentState = "已连接";
+                    updateStatusDisplay();
+                    return device.gatt.connect();
+                })
+                .then(server => server.getPrimaryService(0x6E400001))
+                .then(service => Promise.all([
+                    service.getCharacteristic(0x6E400002), // RX
+                    service.getCharacteristic(0x6E400003)  // TX
+                ]))
+                .then(characteristics => {
+                    [characteristicRX, characteristicTX] = characteristics;
+                    return characteristicTX.startNotifications();
+                })
+                .then(() => {
+                    characteristicTX.addEventListener('characteristicvaluechanged', handleCharacteristicValueChanged);
+                })
+                .catch(error => {
+                    console.error('连接设备时出错: ' + error);
+                    currentState = "未连接";
+                    updateStatusDisplay();
+                });
+        }
+
+        function handleCharacteristicValueChanged(event) {
+            const value = event.target.value;
+            const decoder = new TextDecoder('utf-8');
+            const decodedValue = decoder.decode(value);
+            console.log('收到消息: ' + decodedValue);
+
+            const statusArray = decodedValue.split(',');
+            currentState = statusArray[0];
+            currentSpeed = statusArray[1];
+            lastCommand = statusArray[2];
+            lastReadingTime = statusArray[3];
+            updateStatusDisplay();
+        }
+
+        function updateStatusDisplay() {
+            document.getElementById('currentState').textContent = currentState;
+            document.getElementById('currentSpeed').textContent = currentSpeed;
+            document.getElementById('lastCommand').textContent = lastCommand;
+            document.getElementById('lastReadingTime').textContent = lastReadingTime;
+        }
+
+        function sendCommand(command) {
+            characteristicRX.writeValue(new TextEncoder().encode(command))
+                .then(() => {
+                    console.log('命令已发送: ' + command);
+                })
+                .catch(error => {
+                    console.error('发送命令时出错: ' + error);
+                });
+        }
+
+        document.getElementById('connectButton').addEventListener('click', connectDevice);
+        document.getElementById('forward').addEventListener('click', () => sendCommand('w'));
+        document.getElementById('backward').addEventListener('click', () => sendCommand('s'));
+        document.getElementById('left').addEventListener('click', () => sendCommand('a'));
+        document.getElementById('right').addEventListener('click', () => sendCommand('d'));
+        document.getElementById('stop').addEventListener('click', () => sendCommand('t'));
+        document.getElementById('setSpeed').addEventListener('click', () => {
+            const speed = document.getElementById('speedInput').value;
+            sendCommand('s' + speed);
+        });
+        document.getElementById('speedInput').addEventListener('input', updateSpeedDisplay);
+    </script>
+</body>
+</html>
